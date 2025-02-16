@@ -6,15 +6,18 @@ public class NetworkManager : MonoBehaviour
 {
     public static Vector3 PositionOffset => NetworkTransform.PositionOffset;
     public static NetworkManager Instance;
-    [SerializeField] float tickRate;
+    float tickRate;
 
     public float TickRate => tickRate;
     private Dictionary<int, NetworkTransform> transformTargets = new Dictionary<int, NetworkTransform>();
     private Dictionary<int, ObjectSpawner> spawnerTargets = new Dictionary<int, ObjectSpawner>();
     private Queue<(byte[] data, int sourceId)> pendingSpawnData = new Queue<(byte[] data, int sourceId)>();
+    private Queue<(byte[] data, int sourceId)> pendingCollisionData = new Queue<(byte[] data, int sourceId)>();
+    private Queue<(byte[] data, int sourceId)> pendingCleanupData = new Queue<(byte[] data, int sourceId)>();
 
+    int uncompressedByteCount = 0, compressedByteCount=0, totalUncompressedByteCount = 0, totalCompressedByteCount = 0;
 
-        int uncompressedByteCount = 0, compressedByteCount=0;
+#region Init
 
     void Awake()
     {
@@ -24,7 +27,6 @@ public class NetworkManager : MonoBehaviour
             DontDestroyOnLoad(gameObject);
         }
     }
-
     public void RegisterTransformTarget(int sourceId, NetworkTransform target)
     {
         transformTargets[sourceId] = target;
@@ -37,15 +39,88 @@ public class NetworkManager : MonoBehaviour
             transformTargets.Remove(sourceId);
         }
     }
-
-    public void RelayTransformData(byte[] transformData, int sourceId)
+   public void RegisterSpawnerTarget(int sourceId, ObjectSpawner target)
     {
+        spawnerTargets.Add(sourceId, target);
+    }
+
+    public void UnregisterSpawnerTarget(int sourceId)
+    {
+        if (spawnerTargets.ContainsKey(sourceId))
+        {
+            spawnerTargets.Remove(sourceId);
+        }
+    }
+
+    public void SetTickInterval(float interval) => tickRate = interval;
+#endregion
+    
+#region dataRelay
+
+  public void RelaySpawnData(byte[] spawnData, int sourceId)
+    {
+        pendingSpawnData.Enqueue((spawnData, sourceId));
+    }
+
+    public void RelayCleanupData(byte[] cleanupData, int sourceId)
+    {
+        pendingCleanupData.Enqueue((cleanupData, sourceId));
+    }
+    public void RelayCollisionData(byte[] collisionData, int sourceId)
+    {
+        pendingCollisionData.Enqueue((collisionData, sourceId));
+    }
+    public void RelayTransformData(byte[] transformData, int sourceId)
+    {   
         ProcessPendingSpawnData();
+        ProcessPendingCollisionData();
+        ProcessPendingCleanupData();
         if (transformTargets.TryGetValue(sourceId, out NetworkTransform target))
         {
             uncompressedByteCount += 12;
             compressedByteCount += transformData.Length;
             target.ReceiveTransformData(transformData);
+        }
+        totalCompressedByteCount += compressedByteCount;
+        totalUncompressedByteCount += uncompressedByteCount;
+
+        UIManager.Instance.UpdateNetworkStats(
+            totalCompressedByteCount, 
+            totalUncompressedByteCount, 
+            compressedByteCount, 
+            uncompressedByteCount);
+
+        compressedByteCount = 0;
+        uncompressedByteCount = 0;
+    }
+
+    private void ProcessPendingCleanupData()
+    {
+        while (pendingCleanupData.Count > 0)
+        {
+            var (data, sourceId) = pendingCleanupData.Dequeue();
+            if (spawnerTargets.TryGetValue(sourceId, out ObjectSpawner target))
+            {
+                target.ReceiveCleanupData(data);
+                // uncompressedByteCount += 4; // Instance ID (4 bytes)
+                // compressedByteCount += data.Length;
+            }
+        }
+    }
+
+    
+
+    private void ProcessPendingCollisionData()
+    {
+        while (pendingCollisionData.Count > 0)
+        {
+            var (data, sourceId) = pendingCollisionData.Dequeue();
+            if (spawnerTargets.TryGetValue(sourceId, out ObjectSpawner target))
+            {
+                target.ReceiveCollisionData(data);
+                // uncompressedByteCount += 8; // Instance ID (4 bytes) + collision value (4 bytes)
+                // compressedByteCount += data.Length;
+            }
         }
     }
 
@@ -78,29 +153,5 @@ public class NetworkManager : MonoBehaviour
         }
     }
 
-    public void RegisterSpawnerTarget(int sourceId, ObjectSpawner target)
-    {
-        spawnerTargets.Add(sourceId, target);
-    }
-
-    public void UnregisterSpawnerTarget(int sourceId)
-    {
-        if (spawnerTargets.ContainsKey(sourceId))
-        {
-            spawnerTargets.Remove(sourceId);
-        }
-    }
-
-    public void RelaySpawnData(byte[] spawnData, int sourceId)
-    {
-        pendingSpawnData.Enqueue((spawnData, sourceId));
-    }
-
-    public void RelayCleanupData(byte[] cleanupData, int sourceId)
-    {
-        if (spawnerTargets.TryGetValue(sourceId, out ObjectSpawner target))
-        {
-            target.ReceiveCleanupData(cleanupData);
-        }
-    }
+ #endregion
 }

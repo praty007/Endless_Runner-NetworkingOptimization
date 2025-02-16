@@ -32,6 +32,9 @@ public class ObjectSpawner : MonoBehaviour
     private List<GameObject> activeObstacles;
     private List<GameObject> activeCoins;
     private GameObject collidedObstacle;
+    private GameObject collecteCoin;
+
+    int TotalDamage = 0, TotalScore = 0;
 
     void Awake()
     {
@@ -188,7 +191,8 @@ public class ObjectSpawner : MonoBehaviour
         // Clean up coins
         for (int i = activeCoins.Count - 1; i >= 0; i--)
         {
-            if (activeCoins[i].transform.position.z < referenceCamera.transform.position.z)
+            if (activeCoins[i].transform.position.z < referenceCamera.transform.position.z || 
+                collecteCoin == activeCoins[i])
             {
                 GameObject coin = activeCoins[i];
                 activeCoins.RemoveAt(i);
@@ -207,28 +211,47 @@ public class ObjectSpawner : MonoBehaviour
 
     public void ObstacleCollided(GameObject obstacle)
     {
+        if (!isOwner) return;
+
         collidedObstacle = obstacle;
+        TotalDamage++;
+        UIManager.Instance.UpdatePlayerStats(-1,TotalDamage, -1,-1);
+        byte[] collisionData = Utils.TransformDataSerializer.SerializeCollisionData("obstacle", obstacle.GetInstanceID(), 1);
+        NetworkManager.Instance.RelayCollisionData(collisionData, GetInstanceID());
     }
 
     public void CoinCollected(GameObject coin)
     {
-        if (activeCoins.Contains(coin))
-        {
-            activeCoins.Remove(coin);
-            coin.SetActive(false);
-            coinPool.Enqueue(coin);
+        if (!isOwner) return;
+        collecteCoin = coin;
+        TotalScore++;
+        UIManager.Instance.UpdatePlayerStats(TotalScore, -1, -1,-1);
+        byte[] collectionData = Utils.TransformDataSerializer.SerializeCollisionData("coin", coin.GetInstanceID(), 1);
+        NetworkManager.Instance.RelayCollisionData(collectionData, GetInstanceID());
+    }
 
-            if (isOwner)
+#region target
+
+    public void ReceiveCollisionData(byte[] collisionData)
+    {
+        if (isOwner) return;
+
+        var (objectType, instanceId, val) = Utils.TransformDataSerializer.DeserializeCollisionData(collisionData);
+        if (sourceToTargetObjects.TryGetValue(instanceId, out GameObject targetObject))
+        {
+            if (objectType == "obstacle")
             {
-                // Send cleanup data through network
-                byte[] cleanupData = Utils.TransformDataSerializer.SerializeCleanupData("coin", coin.GetInstanceID());
-                NetworkManager.Instance.RelayCleanupData(cleanupData, GetInstanceID());
+                TotalDamage += val;
+                UIManager.Instance.UpdatePlayerStats(-1, -1, -1, TotalDamage);
+            }
+            else
+            {
+                TotalScore += val;
+                UIManager.Instance.UpdatePlayerStats(-1, -1, TotalScore, -1);
             }
         }
     }
 
-#region target
-    // Network receiver methods for target instances
     public void ReceiveSpawnData(byte[] spawnData)
     {
         if (isOwner) return;

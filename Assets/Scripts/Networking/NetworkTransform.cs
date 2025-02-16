@@ -2,6 +2,8 @@ using UnityEngine;
 using System.Collections.Generic;
 using System;
 
+using Utils;
+
 public class NetworkTransform : MonoBehaviour
 {
     
@@ -29,15 +31,13 @@ public class NetworkTransform : MonoBehaviour
 
     // Shared network settings
     private float baseSendRate => NetworkManager.Instance.TickRate;
-    private float extrapolationTimeLimit => NetworkManager.Instance.TickRate * 1.6f;
     private float velocityLerpSpeed = 6f;
 
     // Dynamic threshold settings for target interpolation
     private float baseThreshold = 45f;
     private float minThreshold = 10f;
     private float speedFactor = 5f;
-    private Vector3[] splinePoints;
-    private const int SPLINE_POINTS = 4;
+    private ExtrapolationType extrapolationType = ExtrapolationType.SimpleVelocity;
     void Start()
     {
         cachedTransform = transform;
@@ -62,6 +62,7 @@ public class NetworkTransform : MonoBehaviour
     #region Owner
     private void ProcessSourceTransformData()
     {
+        UIManager.Instance.UpdateNextTick(nextSendTime-Time.time);
         if (Time.time < nextSendTime) return;
 
         Vector3 currentPosition = cachedTransform.position;
@@ -79,64 +80,11 @@ public class NetworkTransform : MonoBehaviour
         NetworkManager.Instance.RelayTransformData(transformData, gameObject.GetInstanceID());
     }
 
-    //Discarded this approach because even with Time.fixedDeltaTime, the speed seems unreliable, especially for lower rate values.
-    // private void ProcessSourceTransformData()
-    // {
-    //     if(Time.time<nextBaseCheckTime) return;
-    //     nextBaseCheckTime = Time.time + baseSendRate;
-
-    //     Vector3 currentPosition = cachedTransform.position;
-    //     bool positionChanged = currentPosition != lastPosition;
-    //     if(!positionChanged) return;
-
-    //     Vector3 currentVelocity = (currentPosition - lastPosition) / Time.fixedDeltaTime;
-    //     bool velocityChanged = (currentVelocity - lastVelocity).magnitude > VELOCITY_CHANGE_THRESHOLD;
-
-    //     if (Time.time >= nextSendTime || velocityChanged)
-    //     {
-    //         SendTransformData();
-    //         Debug.Log("sending: " + velocityChanged + " " + currentVelocity + " " + lastVelocity);
-
-    //         lastVelocity = currentVelocity;
-
-    //         if (velocityChanged)
-    //             currentSendRate = baseSendRate; // Reset to base rate when velocity changes
-    //         else if (positionChanged)
-    //             currentSendRate = Mathf.Min(currentSendRate * 1.5f, baseSendRate * 10f); // Gradually reduce update frequency
-
-    //         nextSendTime = Time.time + currentSendRate;
-    //     }
-    //     else  Debug.Log("Not sending");
-    // }
-
     #endregion
 
     #region Non Owner
 
     private const int MIN_POINTS = 3; // Minimum points needed for quadratic Bezier
-
-    private Vector3 EvaluateSpline(float t)
-    {
-        if (positionHistory.Count < MIN_POINTS) return targetPosition;
-
-        var historyArray = positionHistory.ToArray();
-        int count = historyArray.Length;
-        
-        // Get the last three points for quadratic Bezier
-        Vector3 p0 = historyArray[count - 3].position;
-        Vector3 p1 = historyArray[count - 2].position;
-        Vector3 p2 = historyArray[count - 1].position;
-        
-        // Simple quadratic Bezier calculation
-        float u = Mathf.Clamp01((t - historyArray[count - 3].time) / 
-                               (historyArray[count - 1].time - historyArray[count - 3].time));
-        float oneMinusU = 1f - u;
-        
-        return oneMinusU * oneMinusU * p0 + 
-               2f * oneMinusU * u * p1 + 
-               u * u * p2;
-
-    }
 
     public void ReceiveTransformData(byte[] transformData)
     {
@@ -173,16 +121,20 @@ public class NetworkTransform : MonoBehaviour
         targetPosition = newTargetPosition;
     }
 
+    public void SetExtrapolationType(ExtrapolationType type)
+    {
+        extrapolationType = type;
+    }
     private void SetTransformData()
     {
         float timeSinceLastUpdate = Time.time - lastUpdateTime;
-        Vector3 extrapolatedPosition = targetPosition;
-
-        // Use spline-based extrapolation if we have enough history
-        if (splinePoints != null && splinePoints.Length == MIN_POINTS && timeSinceLastUpdate < extrapolationTimeLimit)
-        {
-            extrapolatedPosition = EvaluateSpline(Time.time);
-        }
+        Vector3 extrapolatedPosition = ExtrapolationAlgorithms.ExtrapolatePosition(
+            positionHistory,
+            currentVelocity,
+            Time.time,
+            lastUpdateTime,
+            extrapolationType
+        );
 
         if (CheckForMajorDirectionChange(currentVelocity, targetVelocity))
             currentVelocity = targetVelocity;

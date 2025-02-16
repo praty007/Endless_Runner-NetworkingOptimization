@@ -236,5 +236,46 @@ namespace Utils
 
             return result;
         }
+
+        public static byte[] SerializeCollisionData(string objectType, int instanceId, int value)
+        {
+            using (var memoryStream = new MemoryStream())
+            using (var writer = new BinaryWriter(memoryStream))
+            {
+                // Write object type string length and data
+                writer.Write(objectType.Length);
+                writer.Write(objectType.ToCharArray());
+
+                // Write instance ID
+                writer.Write(instanceId);
+
+                // Write collision value
+                writer.Write(value);
+
+                return GetCompressedData(memoryStream.ToArray());
+            }
+        }
+
+        public static (string objectType, int instanceId, int value) DeserializeCollisionData(byte[] data)
+        {
+            byte[] decompressedData = GetDecompressedData(data);
+
+            using (var memoryStream = new MemoryStream(decompressedData))
+            using (var reader = new BinaryReader(memoryStream))
+            {
+                // Read object type
+                int typeLength = reader.ReadInt32();
+                char[] typeChars = reader.ReadChars(typeLength);
+                string objectType = new string(typeChars);
+
+                // Read instance ID
+                int instanceId = reader.ReadInt32();
+
+                // Read collision value
+                int value = reader.ReadInt32();
+
+                return (objectType, instanceId, value);
+            }
+        }
     }
 }
