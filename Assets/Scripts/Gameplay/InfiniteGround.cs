@@ -15,7 +15,7 @@ public class InfiniteGround : MonoBehaviour
         CurrentGround = Ground;
         currentGroundRenderer = CurrentGround.GetComponent<MeshRenderer>();
         groundLength = currentGroundRenderer.bounds.size.z;
-        NextGround = Instantiate(Ground, new Vector3(Ground.transform.position.x, Ground.transform.position.y, groundLength), Quaternion.identity);
+        NextGround = Instantiate(Ground, new Vector3(Ground.transform.position.x, Ground.transform.position.y, groundLength), Quaternion.identity, transform.parent);
 
     }
 
